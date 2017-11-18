@@ -1,0 +1,8 @@
+*~
+*.swp
+*.swo
+*.o
+*.dSYM
+hffs
+main
+.DS_Store
