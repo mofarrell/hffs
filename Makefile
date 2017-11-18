@@ -1,19 +1,18 @@
 # Author: Michael O'Farrell
 # Build for hfs file recovery.
 
-CC=clang++
-CFLAGS=-std=c++11 -stdlib=libc++
+CXX=clang++
+CXXFLAGS=-std=c++11
 PROG=hffs
-OBJS=hffs.o
-
+OBJS=hffs.o recover.o
 
 all: $(PROG)
 
 $(PROG): $(OBJS)
-	$(CC) $(CFLAGS) $(OBJS) -o $@
+	$(CXX) $(CFLAGS) $(OBJS) -o $@
 
-
-hffs.o:
+hffs.o: rgs.h recover.h
+recover.o: convert.h hfs/hfs_format.h recover.h rgs.h
 
 main: main.cpp hfs/hfs_format.h
 	clang++ -g -w -std=c++11 -stdlib=libc++ $< -o $@
