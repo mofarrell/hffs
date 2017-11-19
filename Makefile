@@ -1,7 +1,13 @@
 # Author: Michael O'Farrell
 # Build for hfs file recovery.
 
-CXX=clang++
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
+	CXX=clang++
+else
+	CXX=g++
+endif
+
 CXXFLAGS=-std=c++11 -g
 PROG=hffs
 OBJS=hffs.o recover.o

@@ -5,7 +5,15 @@
 
 #include "hfs/hfs_format.h"
 
+#ifdef __APPLE__
+
 #include <libkern/OSByteOrder.h>
+
+#else 
+
+#include <endian.h>
+
+#endif
 
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Waddress-of-packed-member"
@@ -16,6 +24,8 @@ static void ConvertBigEndian(HFSPlusExtentRecord* er);
 // Credit for the section goes to folks over at google (lot of typing not
 // enough time):
 // http://goo.gl/VjNeAD
+
+#ifdef __APPLE__
 
 inline void ConvertBigEndian(uint16_t* x) {
   *x = OSSwapBigToHostInt16(*x);
@@ -29,6 +39,23 @@ inline void ConvertBigEndian(uint32_t* x) {
 inline void ConvertBigEndian(uint64_t* x) {
   *x = OSSwapBigToHostInt64(*x);
 }
+
+#else
+
+inline void ConvertBigEndian(uint16_t* x) {
+  *x = be16toh(*x);
+}
+inline void ConvertBigEndian(int16_t* x) {
+  *x = be16toh(*x);
+}
+inline void ConvertBigEndian(uint32_t* x) {
+  *x = be32toh(*x);
+}
+inline void ConvertBigEndian(uint64_t* x) {
+  *x = be32toh(*x);
+}
+
+#endif
 
 static void ConvertBigEndian(HFSPlusForkData* fork) {
   ConvertBigEndian(&fork->logicalSize);
@@ -123,6 +150,8 @@ static void ConvertBigEndian(HFSPlusCatalogFile* file) {
 ///////////////////////////////////////////////////////////////////////////////
 // These are more conversion routines I added.
 
+#ifdef __APPLE__
+
 inline void ConvertLittleEndian(uint32_t* x) {
   *x = OSSwapHostToBigInt32(*x);
 }
@@ -130,6 +159,18 @@ inline void ConvertLittleEndian(uint32_t* x) {
 inline void ConvertLittleEndian(uint16_t* x) {
   *x = OSSwapHostToBigInt16(*x);
 }
+
+#else
+
+inline void ConvertLittleEndian(uint32_t* x) {
+  *x = htobe32(*x);
+}
+
+inline void ConvertLittleEndian(uint16_t* x) {
+  *x = htobe16(*x);
+}
+
+#endif
 
 inline void ConvertLittleEndian(uint16_t* x, size_t len) {
   while (len > 0) {

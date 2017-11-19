@@ -6,10 +6,12 @@
 #include "convert.h"
 #include "hfs/hfs_format.h"
 
+#include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 
 #include <algorithm>
+#include <chrono>
 #include <iostream>
 #include <fstream>
 
@@ -59,8 +61,9 @@ void index(RGS& env, HFSPlusCatalogKey* ck) {
 
       HFSPlusCatalogFolder* folder = (HFSPlusCatalogFolder*)record;
       ConvertBigEndian(folder);
-
-      env.folders.emplace(std::make_pair(folder->folderID, fi));
+      
+      uint32_t folderID = folder->folderID;
+      env.folders.emplace(std::make_pair(folderID, fi));
       break;
     }
     case kHFSPlusFileRecord: {

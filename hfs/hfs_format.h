@@ -773,6 +773,8 @@ enum {
 	kHFSBinaryCompare = 0xBC  /* binary compare (case-sensitive) */
 };
 
+#ifdef __APPLE__
+
 #include <uuid/uuid.h>
 
 /* JournalInfoBlock - Structure that describes where our journal lives */
@@ -809,6 +811,7 @@ enum {
 //
 #define EXTJNL_CONTENT_TYPE_UUID "4A6F7572-6E61-11AA-AA11-00306543ECAC"
 
+#endif // Journal exclude on not Mac
 
 #ifdef __cplusplus
 }
