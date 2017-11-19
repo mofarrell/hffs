@@ -6,4 +6,5 @@
 hffs
 main
 .DS_Store
-images/*
+images/
+tmp/
