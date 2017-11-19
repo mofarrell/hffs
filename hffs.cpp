@@ -12,12 +12,13 @@
 
 namespace {
 
-constexpr int64_t kDefaultSectorSize = 512;
+constexpr uint64_t kDefaultSectorSize = 512;
 
 // Prints the help message for launching the utility.
 void help(char* command) {
   std::cerr << "Usage: "<< command <<
                " [--sector-size <sector-size>=512] [--block-size <block-size>]"
+               " [--scan-size <scan-size>=512]"
                " [-o <outfile>] <infile>" << std::endl;
   exit(EXIT_FAILURE);
 }
@@ -30,6 +31,7 @@ int main(int argc, char* argv[]) {
   int c;
   char* bs = nullptr;
   char* ss = nullptr;
+  char* scanSize = nullptr;
   char* outdir = nullptr;
   char* infile = nullptr;
   bool permissive = false;
@@ -41,6 +43,7 @@ int main(int argc, char* argv[]) {
       {"block-size",  required_argument, 0, 'b' },
       {"outdir",      required_argument, 0, 'o' },
       {"permissive",  no_argument,       0, 'p' },
+      {"scan-size", required_argument, 0,  0 },
       {"sector-size", required_argument, 0, 's' },
       {0,             0,                 0,  0  }
     };
@@ -51,6 +54,7 @@ int main(int argc, char* argv[]) {
 
     switch (c) {
       case 0:
+        scanSize = optarg;
         break;
       case 'b':
         bs = optarg;
@@ -78,20 +82,23 @@ int main(int argc, char* argv[]) {
   infile = argv[argc - 1];
   RGS rgs{{
     infile,
+    outdir,
     permissive,
-    ss ? std::stol(ss) : kDefaultSectorSize,
-    bs ? std::stol(bs) : 0
+    ss ? std::stoul(ss) : kDefaultSectorSize,
+    bs ? std::stoul(bs) : 0,
+    scanSize ? std::stoul(scanSize) : bs ? std::stoul(bs) : 0
   }};
-  if (outdir && bs) {
-    // We have the arguments to hunt for files.
-  } else {
+
+  try {
     // Lets find the main block record and print info.
-    try {
-      verify(rgs);
-    } catch (std::runtime_error err) {
-      std::cerr << "Error: " << err.what() << std::endl;
-      exit(EXIT_FAILURE);
+    verify(rgs);
+    if (outdir && bs) {
+      // We have the arguments to hunt for files.
+      recover(rgs);
     }
+  } catch (std::runtime_error err) {
+    std::cerr << "Error: " << err.what() << std::endl;
+    exit(EXIT_FAILURE);
   }
 
   exit(EXIT_SUCCESS);

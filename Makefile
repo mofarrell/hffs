@@ -11,8 +11,11 @@ all: $(PROG)
 $(PROG): $(OBJS)
 	$(CXX) $(CFLAGS) $(OBJS) -o $@
 
-hffs.o: rgs.h recover.h
-recover.o: convert.h hfs/hfs_format.h recover.h rgs.h
+RGS_INCLUDES=rgs.h hfs/hfs_format.h hfs/hfs_unistr.h
+
+hffs.o: $(RGS_INCLUDES) recover.h
+recover.o: $(RGS_INCLUDES) hfs/hfs_format.h hfs/hfs_unistr.h convert.h \
+													 recover.h
 
 main: main.cpp hfs/hfs_format.h
 	clang++ -g -w -std=c++11 -stdlib=libc++ $< -o $@

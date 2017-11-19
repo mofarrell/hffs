@@ -190,6 +190,7 @@ inline void DecodeU16(uint16_t* str, char* out, size_t len) {
     out++;
     len--;
   }
+  *out = '\0';
 }
 
 #pragma clang diagnostic pop
