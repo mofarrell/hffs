@@ -9,6 +9,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
+#include <algorithm>
 #include <iostream>
 #include <fstream>
 
@@ -130,14 +131,14 @@ void scan(RGS& env, std::ifstream& file) {
         << blockNumber * env.options.blockSize << " bytes"
         << std::endl;
     });
-    if (buffer - backbuffer > env.options.blockSize) {
+    if (buffer - backbuffer >= env.options.blockSize) {
       memcpy(&backbuffer, &backbuffer[env.options.blockSize],
           env.options.blockSize);
       if (!file.read(&backbuffer[env.options.blockSize],
             env.options.blockSize)) {
         break; // The file is empty.
       }
-      buffer = backbuffer;
+      buffer -= env.options.blockSize;
       blockNumber++;
     }
 
@@ -154,8 +155,9 @@ void scan(RGS& env, std::ifstream& file) {
     //   - File records
     //   - Folder records
     //   - Extent records (exclusively)
-    if (env.options.permissive || (btnode->kind == kBTLeafNode &&
-          nodeEndOffset == sizeof(BTNodeDescriptor))) {
+    if (env.options.permissive || (btnode->kind == kBTLeafNode)) {
+    //&&
+     //     nodeEndOffset == sizeof(BTNodeDescriptor))) {
       size_t cursor = sizeof(BTNodeDescriptor);
       uint16_t numRead = 0;
       std::vector<HFSPlusCatalogKey*> foundCatalogEntries;
@@ -203,9 +205,15 @@ void scan(RGS& env, std::ifstream& file) {
               cursorUpdate += sizeof(HFSPlusCatalogFile);
               break;
             case kHFSPlusFolderThreadRecord:  // Falltrough
-            case kHFSPlusFileThreadRecord:
+            case kHFSPlusFileThreadRecord: {
               cursorUpdate += sizeof(HFSPlusCatalogThread);
+              cursorUpdate -= sizeof(HFSUniStr255);
+              uint16_t threadNameLength = *(uint16_t*)(buffer + cursor +
+                                                       cursorUpdate);
+              ConvertBigEndian(&threadNameLength);
+              cursorUpdate += sizeof(uint16_t) * (threadNameLength + 1);
               break;
+            }
             default:
               throw std::logic_error("Unknown record type.");
           }
@@ -226,6 +234,8 @@ void scan(RGS& env, std::ifstream& file) {
               (HFSPlusCatalogKey*)(buffer + cursor)
             );
           }
+// 284  <-- block found.
+         
         } else if (length == kHFSPlusExtentKeyMaximumLength // Only length.
             && ((HFSPlusExtentKey*)btkey)->forkType == 0  // data fork
             ) {
@@ -258,7 +268,7 @@ void scan(RGS& env, std::ifstream& file) {
         cursor += cursorUpdate;
         numRead++;
       }
-      if (numRead != 0 && numRead == btnode->numRecords &&
+      if (numRead != 0 &&
           // One must be empty since these entry types are held in different
           // btrees.
           (foundCatalogEntries.empty() || foundExtentEntries.empty())
@@ -270,6 +280,9 @@ void scan(RGS& env, std::ifstream& file) {
         for (auto entry : foundExtentEntries) {
           index(env, entry);
         }
+      }
+      if (numRead != 0 && numRead != btnode->numRecords) {
+        std::cerr << "Couldn't read whole block " << blockNumber << std::endl;
       }
     }
     buffer += env.options.scanSize;
@@ -291,8 +304,8 @@ void defragment(RGS& env, FileInfo& fi) {
 
     for (auto ed : erit->second) {
       fi.extents.emplace_back(ed);
-      fi.totalBlocks += ed.blockCount;
-      if (fi.totalBlocks >= fi.totalBlocks) break;
+      fi.foundBlocks += ed.blockCount;
+      if (fi.foundBlocks >= fi.totalBlocks) break;
     }
   }
 }
@@ -317,13 +330,43 @@ std::string makeFolder(RGS& env, uint32_t parentID) {
   }
   return path;
 }
-void save(RGS& env, const FileInfo& fi) {
+void save(RGS& env, std::ifstream& infile, const FileInfo& fi) {
   if (mkdir(env.options.outdir, 0777) < 0) {
     if (errno != EEXIST) {
       throw std::runtime_error("Couldn't create folder.");
     }
   }
-  makeFolder(env, fi.parentID);
+  auto path = makeFolder(env, fi.parentID) + "/" + fi.name;
+
+  std::ofstream outfile(path, std::ios::out|std::ios::binary);
+  if (outfile.is_open()) {
+    uint64_t sizeLeft = fi.logicalSize;
+    for (const auto& extent : fi.extents) {
+      uint64_t pos = extent.startBlock * env.options.blockSize;
+      uint32_t blocks =  extent.blockCount;
+      infile.seekg(pos);
+      if (!infile) {
+        infile.close();
+        infile = std::ifstream(env.options.infile,
+                               std::ios::in|std::ios::binary);
+        infile.seekg(pos);
+      }
+      char buf[env.options.blockSize];
+      while (blocks > 0) {
+        uint64_t bytes = std::min(env.options.blockSize, sizeLeft);
+        infile.read(buf, bytes);
+        if (!infile) throw std::runtime_error("Failed to read.");
+        outfile.write(buf, bytes);
+        if (!outfile) throw std::runtime_error("Failed to write.");
+        sizeLeft -= std::min(env.options.blockSize, sizeLeft);
+        blocks--;
+      }
+    }
+
+    outfile.close();
+  } else {
+    std::runtime_error("Couldn't open output file.");
+  }
 }
 
 }  // namespace
@@ -362,7 +405,7 @@ void recover(RGS& env) {
           << env.files.size() << " files"
           << std::endl;
       });
-      save(env, f);
+      save(env, file, f);
       fileNumber++;
     }
 

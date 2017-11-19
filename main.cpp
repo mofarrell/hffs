@@ -240,7 +240,7 @@ struct FileInfo {
   }
 };
 
-#define WINDOW_SIZE 8192
+#define WINDOW_SIZE 4096
 #define NOTIFY_BYTES (10 * 1024 * 1024)
 
 #define BLOCK_SIZE 4096
@@ -255,6 +255,7 @@ void scan(FILE* in, void* needle, size_t patternLen, Lambda l) {
   size_t nBytes = NOTIFY_BYTES;
   char buf[WINDOW_SIZE * 3];
   if (!saferead(buf, WINDOW_SIZE, 2, in)) error("So small");
+  int block = 0;
   while (saferead(buf + WINDOW_SIZE * 2, WINDOW_SIZE, 1, in)) {
     for (size_t cursor = WINDOW_SIZE; cursor < WINDOW_SIZE * 2; cursor++) {
       ssize_t patternCursor = patternLen - 1;
@@ -266,7 +267,7 @@ void scan(FILE* in, void* needle, size_t patternLen, Lambda l) {
       if (patternCursor == (ssize_t)-1) {
         // We found a match for our pattern.
         printf("\n");
-        l(buf, cursor + patternLen);
+        l(buf, cursor + patternLen, block);
       }
     }
     memcpy(buf, buf + WINDOW_SIZE, WINDOW_SIZE);
@@ -277,6 +278,7 @@ void scan(FILE* in, void* needle, size_t patternLen, Lambda l) {
       fflush(stdout);
       nBytes = NOTIFY_BYTES;
     }
+    block++;
   }
 }
 
@@ -317,7 +319,7 @@ bool getExtents(FileInfo& fi, HFSPlusExtentRecord* er) {
   return false;
 }
 
-void match(FILE* in, char* buf, size_t position) {
+void match(FILE* in, char* buf, size_t position, int block) {
   HFSPlusCatalogFile* fileRecord = (HFSPlusCatalogFile*)(buf + position);
   ConvertBigEndian(fileRecord);
   if (fileRecord->recordType != kHFSPlusFileRecord) {
@@ -335,6 +337,7 @@ void match(FILE* in, char* buf, size_t position) {
     ConvertBigEndian(&keyLength);
     if (keyLength == i) {
       ConvertBigEndian(k);
+      printf("Found file at block %d\n", block);
       show(k);
       fi.name[k->nodeName.length] = '\0';
       DecodeU16(k->nodeName.unicode, fi.name, k->nodeName.length); 
@@ -379,7 +382,7 @@ void match(FILE* in, char* buf, size_t position) {
       error("Could not find seek position.");
     }
     seek(in, 0);
-    scan(in, &p, sizeof(pattern), [&](char* b, size_t pos){
+    scan(in, &p, sizeof(pattern), [&](char* b, size_t pos, int block){
       memcpy(&er, (HFSPlusExtentRecord*)(b + pos), sizeof(HFSPlusExtentRecord));
       HFSPlusExtentKey* ek =
         (HFSPlusExtentKey*)(b + pos - sizeof(HFSPlusExtentKey));
@@ -400,8 +403,8 @@ void save(FILE* in, char* ending) {
   EncodeU16(ending, pattern, patternLen);
   ConvertLittleEndian(pattern, patternLen);
 
-  scan(in, pattern, patternLen * 2, [&](char* b, size_t pos){
-    match(in, b, pos);
+  scan(in, pattern, patternLen * 2, [&](char* b, size_t pos, int block){
+    match(in, b, pos, block);
   });
 
   free(pattern);

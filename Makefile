@@ -2,7 +2,7 @@
 # Build for hfs file recovery.
 
 CXX=clang++
-CXXFLAGS=-std=c++11
+CXXFLAGS=-std=c++11 -g
 PROG=hffs
 OBJS=hffs.o recover.o
 
