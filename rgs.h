@@ -17,7 +17,9 @@ struct Options {
   bool permissive;
   uint64_t sectorSize;
   uint64_t blockSize;
-  uint64_t scanSize;
+  uint64_t bufferSize;
+  uint64_t catalogNodeSize;
+  uint64_t extentNodeSize;
 };
 
 struct FileInfo {

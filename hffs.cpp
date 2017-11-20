@@ -17,8 +17,11 @@ constexpr uint64_t kDefaultSectorSize = 512;
 // Prints the help message for launching the utility.
 void help(char* command) {
   std::cerr << "Usage: "<< command <<
-               " [--sector-size <sector-size>=512] [--block-size <block-size>]"
-               " [--scan-size <scan-size>=512]"
+               " [--sector-size <sector-size>=512]"
+               " [--block-size <block-size>]"
+               " [--buffer-size <buffer-size>=<block-size>]"
+               " [--catalog-node-size <node-size>=<block-size>]"
+               " [--extent-node-size <node-size>=<block-size>]"
                " [-o <outfile>] <infile>" << std::endl;
   exit(EXIT_FAILURE);
 }
@@ -30,8 +33,10 @@ void help(char* command) {
 int main(int argc, char* argv[]) {
   int c;
   char* bs = nullptr;
+  char* bufferSize = nullptr;
   char* ss = nullptr;
-  char* scanSize = nullptr;
+  char* catalogNodeSize = nullptr;
+  char* extentNodeSize = nullptr;
   char* outdir = nullptr;
   char* infile = nullptr;
   bool permissive = false;
@@ -40,12 +45,14 @@ int main(int argc, char* argv[]) {
     int this_option_optind = optind ? optind : 1;
     int option_index = 0;
     static struct option long_options[] = {
-      {"block-size",  required_argument, 0, 'b' },
-      {"outdir",      required_argument, 0, 'o' },
-      {"permissive",  no_argument,       0, 'p' },
-      {"scan-size", required_argument, 0,  0 },
-      {"sector-size", required_argument, 0, 's' },
-      {0,             0,                 0,  0  }
+      {"block-size",  required_argument,         0, 'b' },
+      {"buffer-size",  required_argument,        0,  0 },
+      {"outdir",      required_argument,         0, 'o' },
+      {"permissive",  no_argument,               0, 'p' },
+      {"catalog-node-size", required_argument,   0,  1 },
+      {"extent-node-size", required_argument,    0,  2 },
+      {"sector-size", required_argument,         0, 's' },
+      {0,             0,                         0,  0  }
     };
 
     c = getopt_long(argc, argv, "s:b:o:ph", long_options, &option_index);
@@ -54,7 +61,13 @@ int main(int argc, char* argv[]) {
 
     switch (c) {
       case 0:
-        scanSize = optarg;
+        bufferSize = optarg;
+        break;
+      case 1:
+        catalogNodeSize = optarg;
+        break;
+      case 2:
+        extentNodeSize = optarg;
         break;
       case 'b':
         bs = optarg;
@@ -80,13 +93,16 @@ int main(int argc, char* argv[]) {
 
   // The last argument is for the image file to be processed.
   infile = argv[argc - 1];
+  uint64_t blockSize = bs ? std::stoul(bs) : 0;
   RGS rgs{{
     infile,
     outdir,
     permissive,
     ss ? std::stoul(ss) : kDefaultSectorSize,
-    bs ? std::stoul(bs) : 0,
-    scanSize ? std::stoul(scanSize) : bs ? std::stoul(bs) : 0
+    blockSize,
+    bufferSize ? std::stoul(bufferSize) : blockSize,
+    catalogNodeSize ? std::stoul(catalogNodeSize) : blockSize,
+    extentNodeSize ? std::stoul(extentNodeSize) : blockSize,
   }};
 
   try {

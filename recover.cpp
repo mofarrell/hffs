@@ -77,13 +77,20 @@ void index(RGS& env, HFSPlusCatalogKey* ck) {
       fi.fileID = file->fileID;
       fi.logicalSize = file->dataFork.logicalSize;
       fi.totalBlocks = file->dataFork.totalBlocks;
-      if (fi.totalBlocks * env.options.blockSize < fi.logicalSize ||
-          (fi.totalBlocks - 1) * env.options.blockSize > fi.logicalSize) {
+      if (fi.logicalSize != 0 && fi.totalBlocks != 0 &&
+          (fi.totalBlocks * env.options.blockSize < fi.logicalSize ||
+           (fi.totalBlocks - 1) * env.options.blockSize >= fi.logicalSize)) {
         if (env.options.permissive) {
           warning("Block size appears wrong.");
         } else {
-          std::runtime_error("Block size appears wrong.");
+          std::cout << "File " << fi.name << " Size " << fi.logicalSize
+                    << " Blocks " << fi.totalBlocks << std::endl;
+          return;
+          // throw std::runtime_error("Block size appears wrong.");
         }
+      }
+      if (fi.logicalSize == 0) {
+        return;
       }
       fi.foundBlocks = 0;
       
@@ -93,7 +100,6 @@ void index(RGS& env, HFSPlusCatalogKey* ck) {
         fi.extents.emplace_back(file->dataFork.extents[i]);
         fi.foundBlocks += file->dataFork.extents[i].blockCount;
       }
-
       env.files.emplace_back(fi);
       break;
     }
@@ -119,88 +125,151 @@ void index(RGS& env, HFSPlusExtentKey* ek) {
 }
 
 ///////////////////////////////////////////////////////////////////////////////
+// These process our two different types of nodes we care about.  Catalog nodes
+// and extent nodes.
+template<typename Lambda>
+bool processNode(RGS& env, size_t nodeSize, char* buffer, Lambda lambda) {
+  // Get the first records offset if it is a catalogNode.
+  size_t reverseCursor = nodeSize - sizeof(uint16_t);
+  uint16_t nodeEndOffset = *(uint16_t*)&buffer[reverseCursor];
+  ConvertBigEndian(&nodeEndOffset);
+  reverseCursor -= sizeof(uint16_t);
+  
+  if (env.options.permissive || nodeEndOffset == sizeof(BTNodeDescriptor)) {
+    size_t cursor = sizeof(BTNodeDescriptor);
+    uint16_t numRead = 0;
+    while (cursor < nodeSize) {
+      // Get the key length for the BTree key.
+      BTreeKey* btkey = (BTreeKey*)&buffer[cursor];
+      uint16_t length = btkey->length16;
+      ConvertBigEndian(&length);
+
+      // Get the records end offset.
+      nodeEndOffset = *(uint16_t*)&buffer[reverseCursor];
+      ConvertBigEndian(&nodeEndOffset);
+      reverseCursor -= sizeof(uint16_t);
+
+      if (!accessIsSafe(kMaxKeyLength, length)) break;
+      char* record = &buffer[cursor + length + sizeof(uint16_t)];
+
+      size_t cursorUpdate = lambda(btkey, record);
+      if (cursorUpdate == -1) return false;
+      if (cursorUpdate == 0) break;
+      numRead++;
+
+      if (nodeEndOffset != cursor + cursorUpdate) {
+        if (!env.options.permissive) {
+          break;
+        } else {
+          warning("Read record with incorrect offset label.");
+        }
+      }
+
+      cursor += cursorUpdate;
+    }
+
+    if (numRead == 0) return false;
+    if (numRead != ((BTNodeDescriptor*)buffer)->numRecords) {
+      std::cerr << "Read some from block." << std::endl;
+    }
+
+    return true;
+  }
+  return false;
+}
+
+///////////////////////////////////////////////////////////////////////////////
 // This is where we scan the image, locating and indexing the files, folders
 // and extents as we scan.
 void scan(RGS& env, std::ifstream& file) {
-  char backbuffer[env.options.blockSize * 2];
+  char backbuffer[env.options.bufferSize * 2];
   char* buffer = backbuffer;
-  if (!file.read(backbuffer, env.options.blockSize * 2)) {
+  if (!file.read(backbuffer, env.options.bufferSize * 2)) {
     std::runtime_error("File empty.");
   }
+  size_t processedBTNodes = 0;
   size_t blockNumber = 0;
+
+  // This will be used to advance our reading by the appropriate amount and no
+  // more.
+  uint64_t minNodeSize = std::min(env.options.catalogNodeSize,
+                                  env.options.extentNodeSize);
+
+  size_t printedFiles = 0;
   while (true) {
+    uint64_t processedSize = 0;
     logInfo(env, [&]{
+        // This will be used to advance our reading by the appropriate amount and no
+        // more.
       std::cout << "Processed: " << blockNumber << " blocks "
-        << blockNumber * env.options.blockSize << " bytes"
+        << blockNumber * env.options.blockSize << " bytes "
+        << processedBTNodes << " BTNodes " 
+        << env.files.size() << " files "
+        << env.folders.size() << " folders "
+        << env.extents.size() << " extents"
         << std::endl;
+
+      if (env.files.size() > printedFiles) {
+        std::cout << "Found additional " << env.files.size() - printedFiles
+                  << " files" << std::endl;
+        printedFiles = env.files.size();
+      }
     });
-    if (buffer - backbuffer >= env.options.blockSize) {
-      memcpy(&backbuffer, &backbuffer[env.options.blockSize],
-          env.options.blockSize);
-      if (!file.read(&backbuffer[env.options.blockSize],
-            env.options.blockSize)) {
+    if (buffer - backbuffer >= env.options.bufferSize) {
+      memcpy(&backbuffer, &backbuffer[env.options.bufferSize],
+          env.options.bufferSize);
+      if (!file.read(&backbuffer[env.options.bufferSize],
+            env.options.bufferSize)) {
         break; // The file is empty.
       }
-      buffer -= env.options.blockSize;
-      blockNumber++;
+      buffer -= env.options.bufferSize;
+      blockNumber += env.options.bufferSize / env.options.blockSize;
+      if (blockNumber > 17563520) {
+        break;
+      }
     }
 
     BTNodeDescriptor* btnode = (BTNodeDescriptor*)buffer;
     ConvertBigEndian(btnode);
 
-    // Get the first records offset.
-    size_t reverseCursor = env.options.scanSize - sizeof(uint16_t);
-    uint16_t nodeEndOffset = *(uint16_t*)&buffer[reverseCursor];
-    ConvertBigEndian(&nodeEndOffset);
-    reverseCursor -= sizeof(uint16_t);
-
     // We only care about leaf nodes that contain:
     //   - File records
     //   - Folder records
     //   - Extent records (exclusively)
-    if (env.options.permissive || (btnode->kind == kBTLeafNode)) {
-    //&&
-     //     nodeEndOffset == sizeof(BTNodeDescriptor))) {
-      size_t cursor = sizeof(BTNodeDescriptor);
-      uint16_t numRead = 0;
+    if (env.options.permissive || btnode->kind == kBTLeafNode) {
+      processedBTNodes++;
+      
       std::vector<HFSPlusCatalogKey*> foundCatalogEntries;
       std::vector<HFSPlusExtentKey*> foundExtentEntries;
-      while (cursor < env.options.blockSize) {
-        // Get the key length for the BTree key.
-        BTreeKey* btkey = (BTreeKey*)&buffer[cursor];
+
+      auto processCatalogNode = [&](BTreeKey* btkey, char* record) -> size_t {
         uint16_t length = btkey->length16;
         ConvertBigEndian(&length);
 
-        // Find the key length if this is a catalogue key.
-        uint16_t possibleStrLen = ((HFSPlusCatalogKey*)btkey)->nodeName.length;
-        ConvertBigEndian(&possibleStrLen);
-
-        // Get the records end offset.
-        nodeEndOffset = *(uint16_t*)&buffer[reverseCursor];
-        ConvertBigEndian(&nodeEndOffset);
+        // Find the name length if this is a catalogue key.
+        uint16_t strLen = ((HFSPlusCatalogKey*)btkey)->nodeName.length;
+        ConvertBigEndian(&strLen);
 
         // Find the record type if this is a catalog key.
-        if (!accessIsSafe(env.options.blockSize, cursor + length + 2)) break;
-        char* node = &buffer[cursor + length + 2];
-        uint16_t possibleRecordType = *(uint16_t*)node;
-        ConvertBigEndian(&possibleRecordType);
+        uint16_t recordType = *(uint16_t*)record;
+        ConvertBigEndian(&recordType);
 
-        size_t cursorUpdate = 0;
         if (  // Check the two lengths stored in catalog keys line up.
-            length == possibleStrLen * sizeof(uint16_t)
+            length == strLen * sizeof(uint16_t)
             + kHFSPlusCatalogKeyMinimumLength
             && (  // Check the record type looks correct.
-              possibleRecordType == kHFSPlusFolderRecord
-              || possibleRecordType == kHFSPlusFileRecord
-              || possibleRecordType == kHFSPlusFolderThreadRecord
-              || possibleRecordType == kHFSPlusFileThreadRecord
+              recordType == kHFSPlusFolderRecord
+              || recordType == kHFSPlusFileRecord
+              || recordType == kHFSPlusFolderThreadRecord
+              || recordType == kHFSPlusFileThreadRecord
               )
            ) {
           // It is highly likely that we have found a catalog record.
           // Handle and record the information it held.
-          cursorUpdate = length + sizeof(uint16_t);  // Key length.
-
-          switch(possibleRecordType) {
+          
+          size_t cursorUpdate = length + sizeof(uint16_t);
+          
+          switch(recordType) {
             case kHFSPlusFolderRecord:
               cursorUpdate += sizeof(HFSPlusCatalogFolder);
               break;
@@ -211,84 +280,68 @@ void scan(RGS& env, std::ifstream& file) {
             case kHFSPlusFileThreadRecord: {
               cursorUpdate += sizeof(HFSPlusCatalogThread);
               cursorUpdate -= sizeof(HFSUniStr255);
-              uint16_t threadNameLength = *(uint16_t*)(buffer + cursor +
+              uint16_t threadNameLength = *(uint16_t*)(((char*)btkey) +
                                                        cursorUpdate);
               ConvertBigEndian(&threadNameLength);
               cursorUpdate += sizeof(uint16_t) * (threadNameLength + 1);
               break;
             }
             default:
-              throw std::logic_error("Unknown record type.");
-          }
-
-          if (nodeEndOffset != cursor + cursorUpdate) {
-            if (!env.options.permissive) {
-              break;
-            } else {
-              warning("Read catalog record with incorrect offset label.");
-            }
+              return 0;
           }
 
           // We have likely found a catalog record.  Record the location for
           // indexing.
-          if (possibleRecordType == kHFSPlusFolderRecord ||
-              possibleRecordType == kHFSPlusFileRecord) {
+          if (recordType == kHFSPlusFolderRecord ||
+              recordType == kHFSPlusFileRecord) {
             foundCatalogEntries.emplace_back(
-              (HFSPlusCatalogKey*)(buffer + cursor)
+              (HFSPlusCatalogKey*)(btkey)
             );
           }
-// 284  <-- block found.
-         
-        } else if (length == kHFSPlusExtentKeyMaximumLength // Only length.
+          return cursorUpdate;
+        }
+        return 0;
+      };
+
+      auto processExtentNode = [&](BTreeKey* btkey, char* record) -> size_t {
+        uint16_t length = btkey->length16;
+        ConvertBigEndian(&length);
+
+        if (length == kHFSPlusExtentKeyMaximumLength // Only length.
             && ((HFSPlusExtentKey*)btkey)->forkType == 0  // data fork
             ) {
-          // Check the node offset record to verify we correctly identified a
-          // record.
-          cursorUpdate = sizeof(HFSPlusExtentKey) +
-            sizeof(HFSPlusExtentRecord);
-          if (nodeEndOffset != cursor + cursorUpdate) {
-            if (!env.options.permissive) {
-              break;
-            } else {
-              warning("Read extent with incorrect offset label.");
-            }
-          }
-
           // We have likely found an extent record.  Record the location to
           // index it.
           foundExtentEntries.emplace_back(
-            (HFSPlusExtentKey*)(buffer + cursor)
+            (HFSPlusExtentKey*)(btkey)
           );
-        } else {
-          break;
+
+          return sizeof(HFSPlusExtentKey) +
+            sizeof(HFSPlusExtentRecord);
         }
-        if (cursorUpdate == 0) {
-          throw std::runtime_error(
-              "Livelock: Cursor is not moving through block."
-              );
+        return 0;
+      };
+      if (processNode(env, env.options.catalogNodeSize, buffer,
+                      processCatalogNode)) {
+        if (!foundExtentEntries.empty()) {
+          throw std::runtime_error("Extent entries non empty.");
         }
-        reverseCursor -= sizeof(uint16_t);
-        cursor += cursorUpdate;
-        numRead++;
-      }
-      if (numRead != 0 &&
-          // One must be empty since these entry types are held in different
-          // btrees.
-          (foundCatalogEntries.empty() || foundExtentEntries.empty())
-         ) {
-        // Index found recrods.
         for (auto entry : foundCatalogEntries) {
           index(env, entry);
+        }
+        processedSize = env.options.catalogNodeSize;
+      } else if (processNode(env, env.options.extentNodeSize, buffer,
+                             processExtentNode)) {
+        if (!foundCatalogEntries.empty()) {
+          throw std::runtime_error("Catalog entries non empty.");
         }
         for (auto entry : foundExtentEntries) {
           index(env, entry);
         }
-      }
-      if (numRead != 0 && numRead != btnode->numRecords) {
-        std::cerr << "Couldn't read whole block " << blockNumber << std::endl;
+        processedSize = env.options.extentNodeSize;
       }
     }
-    buffer += env.options.scanSize;
+    buffer += std::max(minNodeSize, processedSize);
   }
 }
 
@@ -444,20 +497,16 @@ void verify(RGS& env) {
       std::runtime_error("Incorrect signature for HFSPlus in both headers.");
     }
 
-    if (volHeader.signature == kHFSPlusSigWord) {
-      std::cout << "Main header reporting:" << std::endl
-        << "  fileCount: " << volHeader.fileCount << std::endl
-        << "  folderCount: " << volHeader.folderCount << std::endl
-        << "  blockSize: " << volHeader.blockSize << std::endl;
-    }
-    if (altHeader.signature == kHFSPlusSigWord) {
-      std::cout << "Alternate header reporting:" << std::endl
-        // These can mismatch with main header.  Hide them to avoid
-        // confusion.
-        // << "  fileCount: " << altHeader.fileCount << std::endl
-        // << "  folderCount: " << altHeader.folderCount << std::endl
-        << "  blockSize: " << altHeader.blockSize << std::endl;
-    }
+    std::cout << "Main header reporting:" << std::endl
+      << "  fileCount: " << volHeader.fileCount << std::endl
+      << "  folderCount: " << volHeader.folderCount << std::endl
+      << "  blockSize: " << volHeader.blockSize << std::endl;
+    std::cout << "Alternate header reporting:" << std::endl
+      // These can mismatch with main header.  Hide them to avoid
+      // confusion.
+      // << "  fileCount: " << altHeader.fileCount << std::endl
+      // << "  folderCount: " << altHeader.folderCount << std::endl
+      << "  blockSize: " << altHeader.blockSize << std::endl;
   } else {
     throw std::runtime_error("Couldn't open image.");
   }
