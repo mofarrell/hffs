@@ -23,10 +23,7 @@ hffs.o: $(RGS_INCLUDES) recover.h
 recover.o: $(RGS_INCLUDES) hfs/hfs_format.h hfs/hfs_unistr.h convert.h \
 													 recover.h
 
-main: main.cpp hfs/hfs_format.h
-	clang++ -g -w -std=c++11 -stdlib=libc++ $< -o $@
-
 .PHONY: clean
 clean:
-	rm -rf *~ *.o *.dSYM $(PROG) main a.out
+	rm -rf *~ *.o *.dSYM $(PROG)
 	
