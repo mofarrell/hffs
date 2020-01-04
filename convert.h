@@ -52,7 +52,7 @@ inline void ConvertBigEndian(uint32_t* x) {
   *x = be32toh(*x);
 }
 inline void ConvertBigEndian(uint64_t* x) {
-  *x = be32toh(*x);
+  *x = be64toh(*x);
 }
 
 #endif

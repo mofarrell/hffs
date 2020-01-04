@@ -224,7 +224,7 @@ void scan(RGS& env, std::ifstream& file) {
       }
       buffer -= env.options.bufferSize;
       blockNumber += env.options.bufferSize / env.options.blockSize;
-      if (blockNumber > 17563520) {
+      if (env.options.stopBlock > 0 && blockNumber > env.options.stopBlock) {
         break;
       }
     }
@@ -367,7 +367,6 @@ void defragment(RGS& env, FileInfo& fi) {
 }
 
 std::string makeFolder(RGS& env, uint32_t parentID) {
-  //std::cout << parentID << "  ";
   if (parentID < kHFSFirstUserCatalogNodeID) {
     return std::string(env.options.outdir);
   }
@@ -381,7 +380,8 @@ std::string makeFolder(RGS& env, uint32_t parentID) {
   }
   if (mkdir(path.c_str(), 0777) < 0) {
     if (errno != EEXIST) {
-      throw std::runtime_error("Couldn't create folder.");
+      std::cerr << "Failed to create " << path << std::endl;
+      warning("Couldn't create folder.");
     }
   }
   return path;
@@ -389,7 +389,8 @@ std::string makeFolder(RGS& env, uint32_t parentID) {
 void save(RGS& env, std::ifstream& infile, const FileInfo& fi) {
   if (mkdir(env.options.outdir, 0777) < 0) {
     if (errno != EEXIST) {
-      throw std::runtime_error("Couldn't create folder.");
+      std::cerr << "Failed to create " << env.options.outdir << std::endl;
+      warning("Couldn't create folder.");
     }
   }
   auto path = makeFolder(env, fi.parentID) + "/" + fi.name;
@@ -421,7 +422,8 @@ void save(RGS& env, std::ifstream& infile, const FileInfo& fi) {
 
     outfile.close();
   } else {
-    std::runtime_error("Couldn't open output file.");
+    std::cerr << "Failed to write file " << path << std::endl;
+    warning("Couldn't open output file.");
   }
 }
 

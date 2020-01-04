@@ -19,6 +19,7 @@ void help(char* command) {
   std::cerr << "Usage: "<< command <<
                " [--sector-size <sector-size>=512]"
                " [--block-size <block-size>]"
+               " [--stop-block <block-number>]"
                " [--buffer-size <buffer-size>=<block-size>]"
                " [--catalog-node-size <node-size>=<block-size>]"
                " [--extent-node-size <node-size>=<block-size>]"
@@ -33,6 +34,7 @@ void help(char* command) {
 int main(int argc, char* argv[]) {
   int c;
   char* bs = nullptr;
+  char* stopBlock = nullptr;
   char* bufferSize = nullptr;
   char* ss = nullptr;
   char* catalogNodeSize = nullptr;
@@ -46,12 +48,13 @@ int main(int argc, char* argv[]) {
     int option_index = 0;
     static struct option long_options[] = {
       {"block-size",  required_argument,         0, 'b' },
-      {"buffer-size",  required_argument,        0,  0 },
+      {"buffer-size",  required_argument,        0,  0  },
+      {"catalog-node-size", required_argument,   0,  1  },
+      {"extent-node-size", required_argument,    0,  2  },
       {"outdir",      required_argument,         0, 'o' },
       {"permissive",  no_argument,               0, 'p' },
-      {"catalog-node-size", required_argument,   0,  1 },
-      {"extent-node-size", required_argument,    0,  2 },
       {"sector-size", required_argument,         0, 's' },
+      {"stop-block", required_argument,          0,  3  },
       {0,             0,                         0,  0  }
     };
 
@@ -68,6 +71,9 @@ int main(int argc, char* argv[]) {
         break;
       case 2:
         extentNodeSize = optarg;
+        break;
+      case 3:
+        stopBlock = optarg;
         break;
       case 'b':
         bs = optarg;
@@ -100,6 +106,7 @@ int main(int argc, char* argv[]) {
     permissive,
     ss ? std::stoul(ss) : kDefaultSectorSize,
     blockSize,
+    stopBlock ? std::stoul(stopBlock) : 0,
     bufferSize ? std::stoul(bufferSize) : blockSize,
     catalogNodeSize ? std::stoul(catalogNodeSize) : blockSize,
     extentNodeSize ? std::stoul(extentNodeSize) : blockSize,
